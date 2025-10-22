@@ -7,7 +7,6 @@ function createModel(name, schema, connection) {
     throw new Error("Connect mongoose before making a model.");
   }
 
-  console.log(schema.definition);
   const schemaCheck = validateSchema(schema.definition);
   if (!schemaCheck.valid) {
     throw new Error(
@@ -18,7 +17,6 @@ function createModel(name, schema, connection) {
   const filePath = path.join(connection.path, `${name.toLowerCase()}.yaml`);
 
   async function save(doc) {
-    console.log(filePath);
     if (schema.hooks.pre.save)
       for (const fn of schema.hooks.pre.save) await fn(doc);
     const res = await DBHelper.insert(doc, schema, filePath);

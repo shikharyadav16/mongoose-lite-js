@@ -6,7 +6,6 @@ function createSchema(definition, options = {}) {
 
     function addMethod(name, fn) {
         methods[name] = fn;
-        console.log("Method added!")
     }
 
     function addStatic(name, fn) {

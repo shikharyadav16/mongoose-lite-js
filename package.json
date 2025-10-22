@@ -1,0 +1,38 @@
+{
+  "name": "mongoose-lite-js",
+  "version": "1.0.0",
+  "description": "A lightweight virtual Mongoose-like library for JavaScript",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shikharyadav16/mongoose-lite-js.git"
+  },
+  "keywords": [
+    "mongoose",
+    "yaml",
+    "database",
+    "library"
+  ],
+  "author": "Shikhar",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/shikharyadav16/mongoose-lite-js/issues"
+  },
+  "homepage": "https://github.com/shikharyadav16/mongoose-lite-js#readme",
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ]
+}

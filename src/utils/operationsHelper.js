@@ -1,208 +1,280 @@
-const { validateData } = require('../validations/validation');
-const { validationError } = require('../core/Error');
-const Types = require('../core/Types')
-const yaml = require('js-yaml');
-const fs =  require('fs')
+const path = require("path");
+const Types = require("../core/Types");
+const { validateData, validateSchema } = require("../validations/validation");
 
-function applyDefaults(data, schema) {
-  if (data === null || typeof data !== "object") return data;
+const { readFile, writeFile } = require("./yamlHelper");
 
-  function applyField(key, value, rule) {
-    let type;
-    if (typeof rule === "function") type = rule;
-    else if (rule.type) type = rule.type;
-
-    const defaultValue = rule?.default;
-
-    if ((value === undefined || value === null) && defaultValue !== undefined) {
-      data[key] = typeof defaultValue === "function" ? defaultValue() : defaultValue;
-      value = data[key];
-    }
-
-    if (typeof rule === "object" && !type && !Array.isArray(rule)) {
-      if (typeof value !== "object" || value === null) {
-        data[key] = {};
-      }
-      for (const subKey in rule) {
-        applyField(subKey, data[key][subKey], rule[subKey]);
-      }
-      return;
-    }
-
-    if (Array.isArray(rule)) {
-      if (!Array.isArray(value)) return;
-      const itemRule = rule[0];
-      value.forEach((item, idx) => {
-        applyField(idx, item, itemRule);
-      });
-    }
-  }
+function applyDefaults(doc, schema) {
+  const result = { ...doc };
   for (const key in schema) {
-    applyField(key, data[key], schema[key]);
+    const rule = schema[key];
+    if (
+      typeof rule === "object" &&
+      "default" in rule &&
+      result[key] === undefined
+    ) {
+      result[key] =
+        typeof rule.default === "function" ? rule.default() : rule.default;
+    }
   }
-  return data;
+  return result;
 }
 
-function saveDoc(doc, schema ,filePath) {
-  let existing = [];
-  if (fs.existsSync(filePath)) existing = yaml.load(fs.readFileSync(filePath, "utf-8")) || [];
-  const res = validateData(doc, schema.definition);
-  if (!res.valid) {
-    throw validationError(res.errors);
-  }
-  const filetedData = applyDefaults(doc, schema.definition);
-  filetedData._id = Types.ObjectId();
-  existing.push(filetedData);
-  fs.writeFileSync(filePath, yaml.dump(existing));
-  return filetedData;
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== "object" || a === null || b === null) return false;
+  const keysA = Object.keys(a),
+    keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every((key) => deepEqual(a[key], b[key]));
 }
 
-async function findDoc(filter = {}, options = {}, filePath) {
-    const { limit, skip, sort } = options;
+function checkSchemaUnique(filteredData, existingData, schema) {
+  const errors = [];
 
-    if (!fs.existsSync(filePath)) return [];
+  for (const key in schema) {
+    const rule = schema[key];
 
-    const docs = yaml.load(fs.readFileSync(filePath, 'utf8')) || [];
-
-    function matchesFilter(docValue, filterValue) {
-        if (typeof filterValue === 'object' && filterValue !== null) {
-            for (const op in filterValue) {
-                const val = filterValue[op];
-                switch (op) {
-                    case '$eq':
-                        if (docValue !== val) return false;
-                        break;
-                    case '$ne':
-                        if (docValue === val) return false;
-                        break;
-                    case '$gt':
-                        if (!(docValue > val)) return false;
-                        break;
-                    case '$gte':
-                        if (!(docValue >= val)) return false;
-                        break;
-                    case '$lt':
-                        if (!(docValue < val)) return false;
-                        break;
-                    case '$lte':
-                        if (!(docValue <= val)) return false;
-                        break;
-                    case '$in':
-                        if (!Array.isArray(val) || !val.includes(docValue)) return false;
-                        break;
-                    case '$nin':
-                        if (!Array.isArray(val) || val.includes(docValue)) return false;
-                        break;
-                    default:
-                        throw new Error(`Unsupported operator ${op}`);
-                }
-            }
-            return true;
-        } else {
-            return docValue === filterValue;
-        }
+    if (rule?.unique) {
+      const value = filteredData[key];
+      if (existingData.some((doc) => deepEqual(doc[key], value))) {
+        errors.push(`${key} must be unique`);
+      }
     }
 
-    let results = docs.filter(doc => {
-        return Object.entries(filter).every(([key, value]) => matchesFilter(doc[key], value));
+    if (rule?.type === Object && typeof filteredData[key] === "object") {
+      const nestedExisting = existingData.map((d) => d[key] || {});
+      const nestedErrors = checkSchemaUnique(
+        filteredData[key],
+        nestedExisting,
+        rule
+      );
+      errors.push(...nestedErrors.map((e) => `${key}.${e}`));
+    }
+  }
+
+  return errors;
+}
+
+function prepareDocForInsert(doc, schema, existingData) {
+  const validationResult = validateData(doc, schema);
+  if (!validationResult.valid)
+    return { valid: false, errors: validationResult.errors };
+
+  const filteredData = applyDefaults(doc, schema);
+
+  filteredData._id = Types.ObjectId();
+
+  const uniquenessErrors = checkSchemaUnique(
+    filteredData,
+    existingData,
+    schema
+  );
+  if (uniquenessErrors.length)
+    return { valid: false, errors: uniquenessErrors };
+
+  return { valid: true, doc: filteredData };
+}
+
+const DBHelper = {
+  insert: (doc, schema, filePath) => {
+    const resSchema = validateSchema(schema.definition);
+    if (!resSchema.valid) throw new Error(resSchema.errors);
+
+    const existing = readFile(filePath);
+
+    const prepared = prepareDocForInsert(doc, schema.definition, existing);
+    if (!prepared.valid)
+      throw new Error("Validation Error: " + JSON.stringify(prepared.errors));
+
+    existing.push(prepared.doc);
+    writeFile(filePath, existing);
+    return prepared.doc;
+  },
+
+  insertMany: (docs, schema, filePath) => {
+    const existing = readFile(filePath);
+
+    const resSchema = validateSchema(schema.definition);
+    if (!resSchema.valid) throw new Error(resSchema.errors);
+
+    const result = [];
+    const errors = [];
+
+    docs.forEach((doc, idx) => {
+      const prepared = prepareDocForInsert(doc, schema.definition, existing);
+      if (!prepared.valid) {
+        errors.push({ index: idx, errors: prepared.errors });
+      } else {
+        existing.push(prepared.doc);
+        result.push(prepared.doc);
+      }
     });
 
-    if (sort) {
-        const sortKeys = Object.entries(sort);
-        results.sort((a, b) => {
-            for (const [key, order] of sortKeys) {
-                if (a[key] < b[key]) return order === 1 ? -1 : 1;
-                if (a[key] > b[key]) return order === 1 ? 1 : -1;
-            }
-            return 0;
-        });
+    writeFile(filePath, existing);
+    return { inserted: result, errors };
+  },
+
+  find: (filter, schema, filePath) => {
+    const existing = readFile(filePath);
+    return existing.filter((doc) => matchFilter(doc, filter));
+  },
+
+  findOne: (filter, schema, filePath) => {
+    const existing = readFile(filePath);
+    return existing.find((doc) => matchFilter(doc, filter)) || null;
+  },
+
+  update: (filter, update, schema, filePath, multiple = false) => {
+    const existing = readFile(filePath);
+    let updatedCount = 0;
+
+    for (let i = 0; i < existing.length; i++) {
+      if (matchFilter(existing[i], filter)) {
+        existing[i] = applyUpdate(existing[i], update);
+        updatedCount++;
+        if (!multiple) break;
+      }
+    }
+    writeFile(filePath, existing);
+    return { matchedCount: updatedCount };
+  },
+
+  delete: (filter, schema, filePath, multiple = false) => {
+    let existing = readFile(filePath);
+    const originalLength = existing.length;
+
+    if (multiple) {
+      existing = existing.filter((doc) => !matchFilter(doc, filter));
+    } else {
+      const index = existing.findIndex((doc) => matchFilter(doc, filter));
+      if (index !== -1) {
+        existing.splice(index, 1);
+      }
     }
 
-    if (skip !== undefined) results = results.slice(skip);
-    if (limit !== undefined) results = results.slice(0, limit);
-
-    return results;
-}
-
+    writeFile(filePath, existing);
+    return { deletedCount: originalLength - existing.length };
+  },
+  count: (filter, schema, filePath) => {
+    const existing = readFile(filePath) || [];
+    const matchedDocs = existing.filter((doc) => matchFilter(doc, filter));
+    return matchedDocs.length;
+  },
+  exists: (filter, schema, filePath) => {
+    const existing = readFile(filePath) || [];
+    const found = existing.some((doc) => matchFilter(doc, filter));
+    return found;
+  },
+};
 
 function matchFilter(doc, filter) {
   for (const key in filter) {
-    const condition = filter[key];
-    const value = doc[key];
-
-    if (typeof condition === "object" && condition !== null && !Array.isArray(condition)) {
-      for (const op in condition) {
-        const operand = condition[op];
-        switch (op) {
-          case "$in":
-            if (!Array.isArray(operand) || !operand.includes(value)) return false;
-            break;
-          case "$nin":
-            if (Array.isArray(operand) && operand.includes(value)) return false;
-            break;
-          case "$gt":
-            if (!(value > operand)) return false;
-            break;
-          case "$lt":
-            if (!(value < operand)) return false;
-            break;
-          case "$gte":
-            if (!(value >= operand)) return false;
-            break;
-          case "$lte":
-            if (!(value <= operand)) return false;
-            break;
-          case "$ne":
-            if (value === operand) return false;
-            break;
-          default:
-            console.warn(`Unknown operator '${op}' ignored in filter.`);
-            return false;
-        }
+    const val = filter[key];
+    if (typeof val === "object" && val !== null) {
+      if ("$in" in val && !val.$in.includes(doc[key])) return false;
+      if ("$gt" in val && !(doc[key] > val.$gt)) return false;
+      if ("$lt" in val && !(doc[key] < val.$lt)) return false;
+      if ("$eq" in val && !(doc[key] === val.$eq)) return false;
+      if (!["$in", "$gt", "$lt", "$eq"].includes(Object.keys(val)[0])) {
+        if (!matchFilter(doc[key] || {}, val)) return false;
       }
     } else {
-      if (value !== condition) return false;
+      if (doc[key] !== val) return false;
     }
   }
+
   return true;
 }
 
-async function deleteDocs(filter, schema, filePath, deleteMany = false) {
-  if (!fs.existsSync(filePath)) {
-    return { success: false, deletedCount: 0, message: "No database file found." };
+function applyUpdate(doc, update) {
+  if (!Object.keys(update).some((k) => k.startsWith("$"))) {
+    update = { $set: update };
   }
 
-  const docs = yaml.load(fs.readFileSync(filePath, 'utf-8')) || [];
+  const newDoc = JSON.parse(JSON.stringify(doc));
 
-  const invalidKeys = Object.keys(filter).filter(k => !(k in schema.definition));
-  if (invalidKeys.length > 0) {
-    return {
-      success: false,
-      deletedCount: 0,
-      message: `Invalid filter keys: ${invalidKeys.join(', ')}`,
-    };
-  }
-
-  let deletedCount = 0;
-  let remainingDocs = [];
-
-  for (const doc of docs) {
-    const isMatch = matchFilter(doc, filter);
-    if (isMatch) {
-      deletedCount++;
-      if (!deleteMany) continue;
+  function setValue(obj, path, value) {
+    const keys = path.split(".");
+    let temp = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (!(keys[i] in temp)) temp[keys[i]] = {};
+      temp = temp[keys[i]];
     }
-    remainingDocs.push(doc);
+    temp[keys[keys.length - 1]] = value;
   }
 
-  fs.writeFileSync(filePath, yaml.dump(remainingDocs));
+  function getValue(obj, path) {
+    const keys = path.split(".");
+    let temp = obj;
+    for (let k of keys) {
+      if (temp == null) return undefined;
+      temp = temp[k];
+    }
+    return temp;
+  }
 
-  return {
-    success: true,
-    deletedCount,
-    message: deletedCount > 0 ? "Documents deleted successfully." : "No matching documents found.",
-  };
+  for (const op in update) {
+    const changes = update[op];
+
+    switch (op) {
+      case "$set":
+        for (const path in changes) {
+          setValue(newDoc, path, changes[path]);
+        }
+        break;
+
+      case "$max":
+        for (const path in changes) {
+          const current = getValue(newDoc, path);
+          if (current === undefined || current < changes[path]) {
+            setValue(newDoc, path, changes[path]);
+          }
+        }
+        break;
+
+      case "$min":
+        for (const path in changes) {
+          const current = getValue(newDoc, path);
+          if (current === undefined || current > changes[path]) {
+            setValue(newDoc, path, changes[path]);
+          }
+        }
+        break;
+
+      case "$push":
+        for (const path in changes) {
+          let arr = getValue(newDoc, path);
+          if (!Array.isArray(arr)) setValue(newDoc, path, []);
+          arr = getValue(newDoc, path);
+          arr.push(changes[path]);
+        }
+        break;
+
+      case "$pull":
+        for (const path in changes) {
+          let arr = getValue(newDoc, path);
+          if (Array.isArray(arr)) {
+            arr = arr.filter((x) => {
+              const val = changes[path];
+              if (typeof val === "function") return !val(x);
+              return x !== val;
+            });
+            setValue(newDoc, path, arr);
+          }
+        }
+        break;
+
+      default:
+        for (const path in changes) {
+          setValue(newDoc, path, changes[path]);
+        }
+        break;
+    }
+  }
+
+  return newDoc;
 }
 
-
-module.exports = { saveDoc, findDoc, deleteDocs }
+module.exports = DBHelper;

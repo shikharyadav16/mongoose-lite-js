@@ -15,7 +15,7 @@ function createSchema(definition, options = {}) {
 
     function addHooks(type, operation, fn) {
         hooks[type][operation] = hooks[type][operation] || [];
-        hooks[type][operation].push(fn);
+        hooks[type][operation].push(fn); 
     }
 
     return {

@@ -5,14 +5,13 @@ const { Types } = require('./Types');
 const { validateSchema, validateModelName } = require('../validations/validation');
 const { validationError } = require('./Error');
 
-function VirtualMongoose() {
+function Mongoose() {
     const connections = [];
     const models = {};
 
     function connect(path) {
         const conn = createConnection(path);
         connections.push(conn);
-        console.log("Virtual Mongoose connected!");
         return conn;
     }
 
@@ -27,7 +26,6 @@ function VirtualMongoose() {
     
     function model(name, schema) {
         const conn = connections[0];
-        console.log("Connection:", conn)
         const res = validateModelName(name);
         if (!res.valid) {
             throw validationError(res.errors)
@@ -36,8 +34,7 @@ function VirtualMongoose() {
         models[name] = mdl;
         return mdl;
     }
-    // return { connect }
     return { connect, Schema, model, Types }
 }
 
-module.exports = VirtualMongoose();
+module.exports = Mongoose();

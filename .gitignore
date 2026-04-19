@@ -1,11 +1,30 @@
+# Dependencies
 node_modules/
 
-server.js
+# Build outputs
+dist/
+dist-cjs/
 
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# OS files
 .DS_Store
 Thumbs.db
+
+# Environment files
+.env
+.env.*
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# TypeScript
+*.tsbuildinfo
+
+# Optional
+coverage/

@@ -1,14 +1,11 @@
 {
   "name": "mongoose-lite-js",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "description": "A lightweight Mongoose-like ODM using YAML storage",
-
   "type": "module",
-
   "main": "dist-cjs/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
-
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -16,7 +13,6 @@
       "types": "./dist/index.d.ts"
     }
   },
-
   "scripts": {
     "build:esm": "tsc",
     "build:cjs": "tsc -p tsconfig.cjs.json",
@@ -24,12 +20,10 @@
     "dev": "tsc -w",
     "prepublishOnly": "npm run build"
   },
-
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shikharyadav16/mongoose-lite-js.git"
   },
-
   "keywords": [
     "mongoose",
     "odm",
@@ -37,30 +31,23 @@
     "database",
     "typescript"
   ],
-
   "author": "Shikhar",
   "license": "MIT",
-
   "bugs": {
     "url": "https://github.com/shikharyadav16/mongoose-lite-js/issues"
   },
-
   "homepage": "https://github.com/shikharyadav16/mongoose-lite-js#readme",
-
   "dependencies": {
     "js-yaml": "^4.1.1"
   },
-
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0",
     "typescript": "^6.0.3"
   },
-
   "engines": {
     "node": ">=18"
   },
-
   "files": [
     "dist/",
     "dist-cjs/",
